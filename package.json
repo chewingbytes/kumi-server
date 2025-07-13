@@ -1,0 +1,24 @@
+{
+  "name": "kumon-node-server",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@grammyjs/storage-supabase": "^2.5.0",
+    "@supabase/supabase-js": "^2.50.5",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.0",
+    "express": "^5.1.0",
+    "grammy": "^1.37.0",
+    "morgan": "^1.10.0",
+    "nodemailer": "^7.0.5",
+    "resend": "^4.6.0",
+    "xlsx": "^0.18.5"
+  }
+}

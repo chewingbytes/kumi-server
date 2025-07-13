@@ -1,0 +1,69 @@
+# Node.js dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+yarn.lock
+.pnpm-debug.log
+
+# Expo / React Native build folders
+.expo/
+.expo-shared/
+dist/
+web-build/
+android/
+ios/
+build/
+*.jks
+
+# Metro / React Native cache
+**/metro-cache/
+*.expo
+
+# Misc
+.DS_Store
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# VS Code
+.vscode/
+
+# Mac system files
+.DS_Store
+
+# Optional: If using next.js or similar frameworks
+.next/
+out/
+
+# Optional: If using Expo EAS builds
+*.tar.gz
+*.apk
+*.ipa
+
+# Test coverage
+coverage/
+
+# IDE specific
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Optional: if you use Firebase emulators
+firebase-debug.log
+
+# Optional: if you use local database files
+*.sqlite
+*.db
+
+# Optiona
