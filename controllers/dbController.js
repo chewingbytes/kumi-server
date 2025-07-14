@@ -52,10 +52,29 @@ export const checkIn = async (req, res) => {
     const { name } = req.body;
     const sgTime = new Date().toISOString();
 
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+
+    if (!token) {
+      return res.status(401).json({ error: "Missing access token" });
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+
     // 1. Find student
     const { data: student, error: studentErr } = await supabase
       .from("students")
       .select("id, name")
+      .eq("user_id", user.id) // Filter by user
       .ilike("name", name)
       .limit(1)
       .single();
@@ -69,6 +88,7 @@ export const checkIn = async (req, res) => {
       .from("students_checkin")
       .select("id")
       .eq("student_id", student.id)
+      .eq("user_id", user.id)
       .order("checkin_time", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -83,6 +103,7 @@ export const checkIn = async (req, res) => {
           status: "checked_in",
           parent_notified: false,
           time_spent: null,
+          user_id: user.id,
         })
         .eq("id", last.id);
       if (upErr) throw upErr;
@@ -96,6 +117,7 @@ export const checkIn = async (req, res) => {
           student_name: student.name,
           checkin_time: sgTime,
           status: "checked_in",
+          user_id: user.id,
         })
         .select("id")
         .single();
@@ -114,10 +136,29 @@ export const checkOut = async (req, res) => {
     const { name } = req.body;
     const sgTime = new Date().toISOString();
 
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+
+    if (!token) {
+      return res.status(401).json({ error: "Missing access token" });
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+
     const { data: row, error } = await supabase
       .from("students_checkin")
       .select("student_id, status, checkin_time")
       .ilike("student_name", name)
+      .eq("user_id", user.id) // Filter by user
       .order("checkin_time", { ascending: false })
       .limit(1)
       .single();
@@ -141,7 +182,8 @@ export const checkOut = async (req, res) => {
         status: "checked_out",
         time_spent: timeSpentMinutes,
       })
-      .eq("student_id", row.student_id);
+      .eq("student_id", row.student_id)
+      .eq("user_id", user.id);
 
     if (upErr) throw upErr;
 
@@ -149,6 +191,7 @@ export const checkOut = async (req, res) => {
       .from("students")
       .select("parent_id, name")
       .eq("id", row.student_id)
+      .eq("user_id", user.id) // Filter by user
       .single();
 
     if (studentErr || !studentData) {
@@ -161,6 +204,7 @@ export const checkOut = async (req, res) => {
       .from("parents")
       .select("name, email")
       .eq("id", studentData.parent_id)
+      .eq("user_id", user.id)
       .single();
 
     if (parentErr || !parentData?.email) {
@@ -180,7 +224,8 @@ export const checkOut = async (req, res) => {
       await supabase
         .from("students_checkin")
         .update({ parent_notified: true })
-        .eq("student_id", row.student_id);
+        .eq("student_id", row.student_id)
+        .eq("user_id", user.id); // Filter by user
     }
 
     res.json({ message: "checked out", rowId: row.id });
@@ -194,10 +239,30 @@ export const checkOut = async (req, res) => {
 export const latestStatus = async (req, res) => {
   try {
     const { name } = req.params;
+
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+
+    if (!token) {
+      return res.status(401).json({ error: "Missing access token" });
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+
     const { data, error } = await supabase
       .from("students_checkin")
       .select("*")
       .ilike("student_name", name)
+      .eq("user_id", user.id) // Filter by user
       .order("checkin_time", { ascending: false })
       .limit(1)
       .single();
@@ -214,8 +279,27 @@ export const latestStatus = async (req, res) => {
 
 export const finishDay = async (req, res) => {
   try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+
+    if (!token) {
+      return res.status(401).json({ error: "Missing access token" });
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+
     const { data, error } = await supabase
       .from("students_checkin")
+      .eq("user_id", user.id) // Filter by user
       .select("*")
       .order("checkin_time", { ascending: false });
 
@@ -269,15 +353,17 @@ export const finishDay = async (req, res) => {
 export async function fetchStudents(req, res) {
   try {
     const { data, error } = await supabase
-      .from('students_checkin')
-      .select(`id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, students(name)`)
-      .order('checkin_time', { ascending: true });
+      .from("students_checkin")
+      .select(
+        `id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, students(name)`
+      )
+      .order("checkin_time", { ascending: true });
 
     if (error) throw error;
 
     res.status(200).json({ students: data });
   } catch (err) {
-    console.error('Error fetching students:', err.message);
+    console.error("Error fetching students:", err.message);
     res.status(500).json({ error: err.message });
   }
 }
@@ -286,37 +372,58 @@ export async function submitStudents(req, res) {
   const students = req.body.students; // expects an array [{ name, parent, parentEmail }]
 
   if (!Array.isArray(students) || students.length === 0) {
-    return res.status(400).json({ error: 'No students to submit' });
+    return res.status(400).json({ error: "No students to submit" });
   }
 
   try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+
+    if (!token) {
+      return res.status(401).json({ error: "Missing access token" });
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      console.error("Auth Error:", userError);
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+
+    const userId = user.id; // will be stored in students.user_id
+
     for (const s of students) {
       if (!s.name || !s.parent || !s.parentEmail) {
-        return res.status(400).json({ error: 'Missing fields for a student' });
+        return res.status(400).json({ error: "Missing fields for a student" });
       }
 
       // Insert parent
       const { data: parentData, error: parentError } = await supabase
-        .from('parents')
-        .insert([{ name: s.parent, email: s.parentEmail }])
-        .select('id')
+        .from("parents")
+        .insert([{ name: s.parent, email: s.parentEmail, user_id: userId }])
+        .select("id")
         .single();
 
       if (parentError || !parentData) {
-        throw new Error(parentError?.message || 'Failed to insert parent');
+        throw new Error(parentError?.message || "Failed to insert parent");
       }
 
       // Insert student linked to parent
       const { error: studentError } = await supabase
-        .from('students')
-        .insert([{ name: s.name, parent_id: parentData.id }]);
+        .from("students")
+        .insert([{ name: s.name, parent_id: parentData.id, user_id: userId }]);
 
       if (studentError) throw new Error(studentError.message);
     }
 
-    res.status(200).json({ message: 'All students added successfully' });
+    res.status(200).json({ message: "All students added successfully" });
   } catch (err) {
-    console.error('Error submitting students:', err.message);
+    console.error("Error submitting students:", err.message);
     res.status(500).json({ error: err.message });
   }
 }

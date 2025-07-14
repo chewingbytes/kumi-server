@@ -10,7 +10,7 @@ dotenv.config();
 
 const bot_token = process.env.TELEGRAM_API_TOKEN;
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabaseKey = process.env.SUPABASE_ROLE_KEY;
 const smtp2go_user = process.env.SMTP2GO_USER;
 const smtp2go_pass = process.env.SMTP2GO_PASS;
 
