@@ -1,6 +1,6 @@
 // routes/students.js
 import supabase from "../config/supabase.js";
-import XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import fs from "fs";
 import path from "path";
 
@@ -51,6 +51,8 @@ export const checkIn = async (req, res) => {
   try {
     const { name } = req.body;
     const sgTime = new Date().toISOString();
+    const now = new Date();
+    const dateOnly = now.toISOString().split("T")[0]; // e.g. "2025-07-15"
 
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith("Bearer ")
@@ -104,6 +106,7 @@ export const checkIn = async (req, res) => {
           parent_notified: false,
           time_spent: null,
           user_id: user.id,
+          date: dateOnly, // Add the date here
         })
         .eq("id", last.id);
       if (upErr) throw upErr;
@@ -118,6 +121,7 @@ export const checkIn = async (req, res) => {
           checkin_time: sgTime,
           status: "checked_in",
           user_id: user.id,
+          date: dateOnly, // Add the date here
         })
         .select("id")
         .single();
@@ -299,8 +303,8 @@ export const finishDay = async (req, res) => {
 
     const { data, error } = await supabase
       .from("students_checkin")
+      .select("student_name, status, parent_notified, time_spent, date, checkin_time, checkout_time")
       .eq("user_id", user.id) // Filter by user
-      .select("*")
       .order("checkin_time", { ascending: false });
 
     if (error) throw error;
@@ -309,8 +313,6 @@ export const finishDay = async (req, res) => {
       return res.status(404).json({ error: "No check-in records found" });
     }
 
-    // Convert to worksheet and Excel buffer
-    // Format time_spent to "Xh Ym"
     const formattedData = data.map((row) => {
       const mins = row.time_spent || 0;
       const h = Math.floor(mins / 60);
@@ -321,10 +323,63 @@ export const finishDay = async (req, res) => {
       };
     });
 
-    const worksheet = XLSX.utils.json_to_sheet(formattedData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Checkins");
-    const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Checkins");
+
+    // Header row styling (light blue background, bold)
+    const headers = Object.keys(formattedData[0]);
+    worksheet.addRow(headers);
+    const headerRow = worksheet.getRow(1);
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "D9E1F2" }, // light blue
+      };
+      cell.border = {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      };
+    });
+
+    // Add each data row with conditional coloring
+    formattedData.forEach((row) => {
+      const values = headers.map((key) => row[key]);
+      const newRow = worksheet.addRow(values);
+
+      const isComplete = row.checkin_time && row.checkout_time;
+      const fillColor = isComplete ? "E0F7FA" : "FCE4EC"; // green or red
+
+      newRow.eachCell((cell) => {
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: fillColor },
+        };
+        cell.border = {
+          top: { style: "thin" },
+          left: { style: "thin" },
+          bottom: { style: "thin" },
+          right: { style: "thin" },
+        };
+      });
+    });
+
+    // Optional: Auto-width for all columns
+    worksheet.columns.forEach((col) => {
+      let maxLength = 10;
+      col.eachCell({ includeEmpty: true }, (cell) => {
+        const val = cell.value ? cell.value.toString() : "";
+        if (val.length > maxLength) maxLength = val.length;
+      });
+      col.width = maxLength + 2;
+    });
+
+    // Final buffer export
+    const buffer = await workbook.xlsx.writeBuffer();
 
     // Send email with Excel attachment
     const info = await smtpTransport.sendMail({
@@ -343,7 +398,21 @@ export const finishDay = async (req, res) => {
     });
 
     console.log("📧 Report email sent:", info.messageId || info.response);
-    res.json({ message: "Report generated and email sent." });
+
+    const { error: insertErr } = await supabase.from("records").insert(data);
+    if (insertErr) throw insertErr;
+
+    // --- NEW: Delete all entries from students_checkin ---
+    const { error: deleteErr } = await supabase
+      .from("students_checkin")
+      .delete()
+      .eq("user_id", user.id);
+    if (deleteErr) throw deleteErr;
+
+    res.json({
+      message:
+        "Report generated, emailed, data archived, and check-ins cleared.",
+    });
   } catch (err) {
     console.error("❌ finishDay error:", err);
     res.status(500).json({ error: "Failed to generate or send report" });
@@ -352,12 +421,83 @@ export const finishDay = async (req, res) => {
 
 export async function fetchStudents(req, res) {
   try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+
+    if (!token) {
+      return res.status(401).json({ error: "Missing access token" });
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      console.error("Auth Error:", userError);
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+
+    const userId = user.id; // will be stored in students.user_id
+
     const { data, error } = await supabase
       .from("students_checkin")
       .select(
         `id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, students(name)`
       )
+      .eq("user_id", userId)
       .order("checkin_time", { ascending: true });
+
+    if (error) throw error;
+
+    res.status(200).json({ students: data });
+  } catch (err) {
+    console.error("Error fetching students:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+export async function fetchAllStudents(req, res) {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+
+    if (!token) {
+      return res.status(401).json({ error: "Missing access token" });
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      console.error("Auth Error:", userError);
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+
+    const userId = user.id; // will be stored in students.user_id
+
+    const { data, error } = await supabase
+      .from("students")
+      .select(
+        `
+    id,
+    name,
+    parent_id,
+    parents (
+      id,
+      name,
+      email
+    )
+  `
+      )
+      .eq("user_id", userId) // only on students table
+      .order("name", { ascending: true });
 
     if (error) throw error;
 
@@ -403,20 +543,40 @@ export async function submitStudents(req, res) {
       }
 
       // Insert parent
-      const { data: parentData, error: parentError } = await supabase
+      const { data: existingParent, error: lookupError } = await supabase
         .from("parents")
-        .insert([{ name: s.parent, email: s.parentEmail, user_id: userId }])
         .select("id")
+        .eq("email", s.parentEmail)
+        .eq("user_id", userId) // optional: check it's this user's parent
         .single();
 
-      if (parentError || !parentData) {
-        throw new Error(parentError?.message || "Failed to insert parent");
+      let parentId;
+
+      if (lookupError && lookupError.code !== "PGRST116") {
+        throw new Error(lookupError.message);
       }
 
-      // Insert student linked to parent
+      if (existingParent) {
+        parentId = existingParent.id;
+      } else {
+        // Step 2: Insert new parent if not found
+        const { data: newParent, error: insertError } = await supabase
+          .from("parents")
+          .insert([{ name: s.parent, email: s.parentEmail, user_id: userId }])
+          .select("id")
+          .single();
+
+        if (insertError || !newParent) {
+          throw new Error(insertError?.message || "Failed to insert parent");
+        }
+
+        parentId = newParent.id;
+      }
+
+      // Step 3: Insert the student linked to the parentId
       const { error: studentError } = await supabase
         .from("students")
-        .insert([{ name: s.name, parent_id: parentData.id, user_id: userId }]);
+        .insert([{ name: s.name, parent_id: parentId, user_id: userId }]);
 
       if (studentError) throw new Error(studentError.message);
     }

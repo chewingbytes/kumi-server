@@ -5,7 +5,7 @@ dotenv.config();
 
 const app = express();
 
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 8080;
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true })); // For form data
@@ -16,6 +16,11 @@ app.use("/api/db", dbRoutes);
 // app.use("/api/auth", authRoutes);
 // app.use("/api/payment", stripeRoutes);
 
-app.listen(4000, "0.0.0.0", () => {
-  console.log("Listening on port 4000");
+app.get("/", (req, res) => {
+  res.send("✅ Server is up and running!");
 });
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log("Listening on port ", PORT);
+});
+
