@@ -7,6 +7,7 @@ import {
   fetchStudents,
   finishDay,
   latestStatus,
+  sendIndividualCheckout,
   submitStudents,
 } from "../controllers/dbController.js";
 const router = express.Router();
@@ -20,6 +21,7 @@ const upload = multer({ dest: "uploads/" });
 
 router.post("/checkin", checkIn);
 router.post("/checkout", checkOut);
+router.post("/sendMessage", sendIndividualCheckout);
 router.post("/students", submitStudents);
 router.get("/status/:name", latestStatus);
 router.get("/students", fetchStudents);
@@ -59,9 +61,8 @@ router.post("/upload-csv", upload.single("file"), async (req, res) => {
       .on("data", (data) => {
         // Assume CSV columns: name,parent,parentEmail
         results.push({
-          name: data.name,
-          parent: data.parent,
-          parentEmail: data.parentEmail,
+          studentName: data.studentName,
+          parentNumber: data.parentNumber,
         });
       })
       .on("error", (err) => {
@@ -78,7 +79,7 @@ router.post("/upload-csv", upload.single("file"), async (req, res) => {
         try {
           // Loop through each student entry and insert parent & student
           for (const s of results) {
-            if (!s.name || !s.parent || !s.parentEmail) {
+            if (!s.studentName || !s.parentNumber) {
               return res.status(400).json({
                 error: "Missing fields for one or more students in CSV",
               });
@@ -88,7 +89,7 @@ router.post("/upload-csv", upload.single("file"), async (req, res) => {
             const { data: existingParent, error: lookupError } = await supabase
               .from("parents")
               .select("id")
-              .eq("email", s.parentEmail)
+              .eq("phone_number", s.parentNumber)
               .eq("user_id", userId) // optional: check it's this user's parent
               .single();
 
@@ -105,9 +106,7 @@ router.post("/upload-csv", upload.single("file"), async (req, res) => {
               // Step 2: Insert new parent if not found
               const { data: newParent, error: insertError } = await supabase
                 .from("parents")
-                .insert([
-                  { name: s.parent, email: s.parentEmail, user_id: userId },
-                ])
+                .insert([{ phone_number: s.parentNumber, user_id: userId }])
                 .select("id")
                 .single();
 
@@ -123,7 +122,9 @@ router.post("/upload-csv", upload.single("file"), async (req, res) => {
             // Step 3: Insert the student linked to the parentId
             const { error: studentError } = await supabase
               .from("students")
-              .insert([{ name: s.name, parent_id: parentId, user_id: userId }]);
+              .insert([
+                { name: s.studentName, parent_id: parentId, user_id: userId },
+              ]);
 
             if (studentError) throw new Error(studentError.message);
           }

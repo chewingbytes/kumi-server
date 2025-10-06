@@ -46,6 +46,146 @@ async function sendCheckoutEmail(
   }
 }
 
+export async function sendIndividualCheckout(req, res) {
+  try {
+    const { name } = req.body;
+
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+
+    if (!token) {
+      return res.status(401).json({ error: "Missing access token" });
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+
+    const { data: student, error: studentErr } = await supabase
+      .from("students")
+      .select("id, name, parent_id")
+      .eq("user_id", user.id) // Filter by user
+      .ilike("name", name)
+      .limit(1)
+      .single();
+
+    if (studentErr || !student) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    const { data: parent, error: parentErr } = await supabase
+      .from("parents")
+      .select("id, phone_number")
+      .eq("id", student.parent_id)
+      .single();
+
+    if (parentErr || !parent) {
+      return res.status(404).json({ error: "Parent not found" });
+    }
+
+    const response = await fetch(
+      `https://graph.facebook.com/v23.0/${process.env.PHONE_NUMBER_ID}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.WHATSAPP_SYSTEM_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to: `+65${parent.phone_number}`, // full international format, e.g., "+6598315882"
+          type: "template",
+          template: {
+            name: "student_dismissal_template",
+            language: { code: "en_US" },
+            components: [
+              {
+                type: "body",
+                parameters: [
+                  {
+                    type: "text",
+                    parameter_name: "student_name",
+                    text: name,
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      res.json(" FAILD whatsap message");
+      return false;
+    }
+
+    console.log("📱 WhatsApp message sent:", data);
+    return true;
+  } catch (err) {
+    res.json("FAILSLLELD whatsap message");
+    return false;
+  }
+}
+
+export async function sendCheckoutWhatsApp(studentName, parentNumber) {
+  try {
+    const response = await fetch(
+      `https://graph.facebook.com/v23.0/${process.env.PHONE_NUMBER_ID}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.WHATSAPP_SYSTEM_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to: `+65${parentNumber}`, // full international format, e.g., "+6598315882"
+          type: "template",
+          template: {
+            name: "student_dismissal_template",
+            language: { code: "en_US" },
+            components: [
+              {
+                type: "body",
+                parameters: [
+                  {
+                    type: "text",
+                    parameter_name: "student_name",
+                    text: studentName,
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("❌ WhatsApp API error:", data);
+      return false;
+    }
+
+    console.log("📱 WhatsApp message sent:", data);
+    return true;
+  } catch (err) {
+    console.error("❌ Fetch error:", err);
+    return false;
+  }
+}
+
 /* ──────────────── 1️⃣  Check‑in (POST /checkin) ──────────────── */
 export const checkIn = async (req, res) => {
   try {
@@ -179,6 +319,8 @@ export const checkOut = async (req, res) => {
     const diffMs = checkoutTime - checkinTime;
     const timeSpentMinutes = Math.floor(diffMs / 60000); // 1 min = 60000 ms
 
+    console.log("ITH URHTEF:", row);
+    console.log("USRID:", user.id);
     const { error: upErr } = await supabase
       .from("students_checkin")
       .update({
@@ -191,46 +333,19 @@ export const checkOut = async (req, res) => {
 
     if (upErr) throw upErr;
 
-    const { data: studentData, error: studentErr } = await supabase
-      .from("students")
-      .select("parent_id, name")
-      .eq("id", row.student_id)
-      .eq("user_id", user.id) // Filter by user
-      .single();
-
-    if (studentErr || !studentData) {
-      console.warn("⚠️ Student not found or no parent_id");
-      return res.json({ message: "checked out", rowId: row.id });
-    }
-
-    // 4. Fetch parent info (name, email) by parent_id
-    const { data: parentData, error: parentErr } = await supabase
-      .from("parents")
-      .select("name, email")
-      .eq("id", studentData.parent_id)
-      .eq("user_id", user.id)
-      .single();
-
-    if (parentErr || !parentData?.email) {
-      console.warn("⚠️ Parent not found or no email");
-      return res.json({ message: "checked out", rowId: row.id });
-    }
-
     // 5. Send email to parent (fire and forget)
-    const emailSent = sendCheckoutEmail(
-      parentData.email,
-      parentData.name || "Parent",
-      studentData.name,
-      sgTime
-    );
+    // const checkOutMessageSent = sendCheckoutWhatsApp(
+    //   studentData.name,
+    //   parentData.phone_number
+    // );
 
-    if (emailSent) {
-      await supabase
-        .from("students_checkin")
-        .update({ parent_notified: true })
-        .eq("student_id", row.student_id)
-        .eq("user_id", user.id); // Filter by user
-    }
+    // if (checkOutMessageSent) {
+    //   await supabase
+    //     .from("students_checkin")
+    //     .update({ parent_notified: true })
+    //     .eq("student_id", row.student_id)
+    //     .eq("user_id", user.id); // Filter by user
+    // }
 
     res.json({ message: "checked out", rowId: row.id });
   } catch (e) {
@@ -300,10 +415,18 @@ export const finishDay = async (req, res) => {
     if (userError || !user) {
       return res.status(401).json({ error: "Invalid or expired token" });
     }
+    console.log("EMAIL:", user.email);
+
+    const userEmail = user.email;
+    if (!userEmail) {
+      return res.status(400).json({ error: "User has no email address" });
+    }
 
     const { data, error } = await supabase
       .from("students_checkin")
-      .select("student_name, status, parent_notified, time_spent, date, checkin_time, checkout_time")
+      .select(
+        "student_name, status, parent_notified, time_spent, date, checkin_time, checkout_time"
+      )
       .eq("user_id", user.id) // Filter by user
       .order("checkin_time", { ascending: false });
 
@@ -368,6 +491,7 @@ export const finishDay = async (req, res) => {
       });
     });
 
+    //bllllueee
     // Optional: Auto-width for all columns
     worksheet.columns.forEach((col) => {
       let maxLength = 10;
@@ -384,7 +508,7 @@ export const finishDay = async (req, res) => {
     // Send email with Excel attachment
     const info = await smtpTransport.sendMail({
       from: "Kumon @ Punggol Plaza <no-reply@kumonpunggolplaza.com>",
-      to: "bryanchewzy24@gmail.com", // Replace with real email or from req.body
+      to: `${userEmail}`, // Replace with real email or from req.body
       subject: `📄 Daily Check-in Report - ${new Date().toLocaleDateString("en-SG")}`,
       text: `Please find attached the daily student check-in/out report.`,
       attachments: [
@@ -491,8 +615,7 @@ export async function fetchAllStudents(req, res) {
     parent_id,
     parents (
       id,
-      name,
-      email
+      phone_number
     )
   `
       )
@@ -538,7 +661,7 @@ export async function submitStudents(req, res) {
     const userId = user.id; // will be stored in students.user_id
 
     for (const s of students) {
-      if (!s.name || !s.parent || !s.parentEmail) {
+      if (!s.name || !s.parentNumber) {
         return res.status(400).json({ error: "Missing fields for a student" });
       }
 
@@ -546,7 +669,7 @@ export async function submitStudents(req, res) {
       const { data: existingParent, error: lookupError } = await supabase
         .from("parents")
         .select("id")
-        .eq("email", s.parentEmail)
+        .eq("phone_number", s.parentNumber)
         .eq("user_id", userId) // optional: check it's this user's parent
         .single();
 
@@ -562,7 +685,7 @@ export async function submitStudents(req, res) {
         // Step 2: Insert new parent if not found
         const { data: newParent, error: insertError } = await supabase
           .from("parents")
-          .insert([{ name: s.parent, email: s.parentEmail, user_id: userId }])
+          .insert([{ phone_number: s.parentNumber, user_id: userId }])
           .select("id")
           .single();
 
