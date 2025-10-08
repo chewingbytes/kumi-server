@@ -129,11 +129,17 @@ export async function sendIndividualCheckout(req, res) {
       return false;
     }
 
+    await supabase
+      .from("students_checkin")
+      .update({ parent_notified: true })
+      .eq("student_id", student.id)
+      .eq("user_id", user.id); // Filter by user
+
     console.log("📱 WhatsApp message sent:", data);
-    return true;
+    return res.status(200).json(true);
   } catch (err) {
     res.json("FAILSLLELD whatsap message");
-    return false;
+    return res.status(500).json(false);
   }
 }
 
@@ -179,10 +185,10 @@ export async function sendCheckoutWhatsApp(studentName, parentNumber) {
     }
 
     console.log("📱 WhatsApp message sent:", data);
-    return true;
+    return res.status(200).json(true);
   } catch (err) {
     console.error("❌ Fetch error:", err);
-    return false;
+    return res.status(500).json(false);
   }
 }
 
