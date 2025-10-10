@@ -575,7 +575,7 @@ export async function fetchStudents(req, res) {
     const { data, error } = await supabase
       .from("students_checkin")
       .select(
-        `id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, students(name)`
+        `id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, students(name), time_spent`
       )
       .eq("user_id", userId)
       .order("checkin_time", { ascending: true });
