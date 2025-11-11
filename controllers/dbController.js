@@ -578,7 +578,7 @@ export async function fetchStudents(req, res) {
         `id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, students(name), time_spent`
       )
       .eq("user_id", userId)
-      .order("checkin_time", { ascending: true });
+      .order("id", { ascending: true }); // oldest inserted first, newest inserted last
 
     if (error) throw error;
 

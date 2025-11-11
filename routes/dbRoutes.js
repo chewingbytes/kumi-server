@@ -29,6 +29,8 @@ router.get("/all-students", fetchAllStudents);
 router.post("/finish-day", finishDay);
 
 router.post("/upload-csv", upload.single("file"), async (req, res) => {
+  console.log("=== /upload-csv called ===");
+
   try {
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith("Bearer ")
@@ -36,8 +38,11 @@ router.post("/upload-csv", upload.single("file"), async (req, res) => {
       : null;
 
     if (!token) {
+      console.log("❌ Missing access token");
       return res.status(401).json({ error: "Missing access token" });
     }
+
+    console.log("✅ Token received");
 
     // Verify user token
     const {
@@ -46,99 +51,127 @@ router.post("/upload-csv", upload.single("file"), async (req, res) => {
     } = await supabase.auth.getUser(token);
 
     if (userError || !user) {
-      console.error("Auth Error:", userError);
+      console.error("❌ Auth Error:", userError);
       return res.status(401).json({ error: "Invalid or expired token" });
     }
 
     const userId = user.id;
+    console.log("✅ Authenticated user:", user.email, "ID:", userId);
+
+    if (!req.file) {
+      console.error("❌ No file received");
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+
+    const filePath = path.resolve(req.file.path);
+    console.log("📂 Uploaded file path:", filePath);
 
     const results = [];
-    const filePath = path.resolve(req.file.path); // full absolute path
-    console.log("Uploaded file path:", filePath);
 
-    fs.createReadStream(filePath)
+    // ✅ Setup CSV stream
+    const stream = fs
+      .createReadStream(filePath)
       .pipe(csv())
+      .on("headers", (headers) => {
+        console.log("🧾 CSV Headers detected:", headers);
+      })
       .on("data", (data) => {
-        // Assume CSV columns: name,parent,parentEmail
+        console.log("➡️ CSV Row:", data);
         results.push({
-          studentName: data.studentName,
-          parentNumber: data.parentNumber,
+          studentName: data.studentName?.trim(),
+          parentNumber: data.parentNumber?.trim(),
         });
       })
       .on("error", (err) => {
-        console.error("Stream error:", err);
+        console.error("❌ CSV Stream error:", err);
         res.status(500).json({ error: "Failed to read CSV file." });
       })
-      .on("close", async () => {
+      .on("end", async () => {
+        console.log("✅ CSV parsing completed, total rows:", results.length);
         await fsPromises.unlink(filePath);
+        console.log("🧹 Temp file deleted");
 
         if (!results.length) {
+          console.log("❌ CSV file empty");
           return res.status(400).json({ error: "CSV file is empty" });
         }
 
         try {
-          // Loop through each student entry and insert parent & student
-          for (const s of results) {
+          for (const [index, s] of results.entries()) {
+            console.log(`📥 Processing row ${index + 1}:`, s);
+
             if (!s.studentName || !s.parentNumber) {
+              console.warn("⚠️ Missing data:", s);
               return res.status(400).json({
                 error: "Missing fields for one or more students in CSV",
               });
             }
 
-            // Step 1: Check if parent already exists by email
+            // Check if parent already exists
             const { data: existingParent, error: lookupError } = await supabase
               .from("parents")
               .select("id")
               .eq("phone_number", s.parentNumber)
-              .eq("user_id", userId) // optional: check it's this user's parent
-              .single();
+              .eq("user_id", userId)
+              .maybeSingle();
 
-            let parentId;
-
-            if (lookupError && lookupError.code !== "PGRST116") {
-              // Only throw if the error is not "No rows returned"
+            if (lookupError) {
+              console.error("❌ Parent lookup error:", lookupError);
               throw new Error(lookupError.message);
             }
 
-            if (existingParent) {
-              parentId = existingParent.id;
+            let parentId = existingParent?.id;
+            if (parentId) {
+              console.log("👨‍👧 Existing parent found:", parentId);
             } else {
-              // Step 2: Insert new parent if not found
+              console.log("🆕 Creating new parent for:", s.parentNumber);
               const { data: newParent, error: insertError } = await supabase
                 .from("parents")
                 .insert([{ phone_number: s.parentNumber, user_id: userId }])
                 .select("id")
                 .single();
 
-              if (insertError || !newParent) {
-                throw new Error(
-                  insertError?.message || "Failed to insert parent"
-                );
+              if (insertError) {
+                console.error("❌ Parent insert error:", insertError);
+                throw new Error(insertError.message);
               }
-
               parentId = newParent.id;
+              console.log("✅ New parent created:", parentId);
             }
 
-            // Step 3: Insert the student linked to the parentId
+            // Insert student
             const { error: studentError } = await supabase
               .from("students")
               .insert([
                 { name: s.studentName, parent_id: parentId, user_id: userId },
               ]);
 
-            if (studentError) throw new Error(studentError.message);
+            if (studentError) {
+              console.error("❌ Student insert error:", studentError);
+              throw new Error(studentError.message);
+            }
+
+            console.log(`✅ Student added: ${s.studentName}`);
           }
 
+          console.log("🎉 All students processed successfully");
           res.status(200).json({
             message: "All students added successfully",
             studentsCount: results.length,
           });
         } catch (err) {
-          console.error("Error inserting students:", err.message);
+          console.error("❌ Insert logic error:", err.message);
           res.status(500).json({ error: err.message });
         }
       });
+
+    // ✅ Catch any unhandled stream error
+    stream.on("error", (err) => {
+      console.error("❌ Fatal stream error:", err);
+      res.status(500).json({ error: "Stream error occurred" });
+    });
   } catch (error) {
+    console.error("❌ Outer try/catch error:", error);
     res.status(500).json({ error: error.message });
   }
 });

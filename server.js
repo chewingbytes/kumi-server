@@ -2,7 +2,6 @@ import express from "express";
 import dotenv from "dotenv";
 import dbRoutes from "./routes/dbRoutes.js";
 import cors from "cors";
-import { sendIndividualCheckout } from "./controllers/dbController.js";
 
 dotenv.config();
 
