@@ -67,3 +67,5 @@ firebase-debug.log
 *.db
 
 # Optiona
+
+/generated/prisma

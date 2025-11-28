@@ -11,17 +11,25 @@
   "description": "",
   "dependencies": {
     "@grammyjs/storage-supabase": "^2.5.0",
+    "@prisma/adapter-pg": "^7.0.1",
+    "@prisma/client": "^6.19.0",
     "@supabase/supabase-js": "^2.50.5",
     "cors": "^2.8.5",
     "csv-parser": "^3.2.0",
-    "dotenv": "^17.2.0",
+    "dotenv": "^17.2.3",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "grammy": "^1.37.0",
     "morgan": "^1.10.0",
     "multer": "^2.0.1",
     "nodemailer": "^7.0.5",
+    "pg": "^8.16.3",
     "resend": "^4.6.0",
     "twilio": "^5.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/pg": "^8.15.6",
+    "prisma": "^6.19.0"
   }
 }
