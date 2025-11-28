@@ -15,6 +15,19 @@ const smtpTransport = nodemailer.createTransport({
   },
 });
 
+function formatSGTime(timestamp) {
+  if (!timestamp) return "";
+
+  return new Date(timestamp).toLocaleString("en-SG", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
 async function sendCheckoutEmail(
   toEmail,
   parentName,
@@ -46,8 +59,78 @@ async function sendCheckoutEmail(
   }
 }
 
+export const deleteStudent = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+
+    if (!token) {
+      return res.status(401).json({ error: "Missing access token" });
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+
+    console.log("ID:", id);
+    console.log("user:", user);
+
+    // 🧩 2. Verify student belongs to this user
+    const { data: student, error: findErr } = await supabase
+      .from("students")
+      .select("id, user_id")
+      .eq("id", id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (findErr) throw findErr;
+    if (!student) {
+      return res.status(404).json({ error: findErr });
+    }
+
+    await supabase
+      .from("students_checkin")
+      .delete()
+      .eq("student_id", student.id)
+      .eq("user_id", user.id);
+
+    // 🗑 4. Delete from students table
+    const { error: delErr } = await supabase
+      .from("students")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", user.id);
+
+    if (delErr) throw delErr;
+
+    return res.json({ message: "Student deleted successfully" });
+  } catch (err) {
+    console.error("❌ deleteStudent error:", err);
+    return res
+      .status(500)
+      .json({ error: "Server error while deleting student" });
+  }
+};
+
 export async function sendIndividualCheckout(req, res) {
   try {
+    console.log(
+      "THIS IS TH EFUCKINGNN PHONE_NUMBER ID:",
+      process.env.PHONE_NUMBER_ID
+    );
+    console.log(
+      "THIS IS TH EFUCKINGNN WHATSAPP NUMBERID:",
+      process.env.WHATSAPP_SYSTEM_TOKEN
+    );
     const { name } = req.body;
 
     const authHeader = req.headers.authorization;
@@ -446,6 +529,7 @@ export const finishDay = async (req, res) => {
       const mins = row.time_spent || 0;
       const h = Math.floor(mins / 60);
       const m = mins % 60;
+
       return {
         ...row,
         time_spent: h > 0 ? `${h}h ${m}m` : `${m}m`,
@@ -575,10 +659,10 @@ export async function fetchStudents(req, res) {
     const { data, error } = await supabase
       .from("students_checkin")
       .select(
-        `id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, students(name), time_spent`
+        `id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, students(name), time_spent, latest_interacted`
       )
       .eq("user_id", userId)
-      .order("id", { ascending: true }); // oldest inserted first, newest inserted last
+      .order("latest_interacted", { ascending: false });
 
     if (error) throw error;
 
@@ -716,3 +800,141 @@ export async function submitStudents(req, res) {
     res.status(500).json({ error: err.message });
   }
 }
+
+export const getParentNumber = async (req, res) => {
+  try {
+    const { parent_id, student_name } = req.body;
+
+    if (!parent_id || !student_name) {
+      return res
+        .status(400)
+        .json({ error: "parent_id and student_name are required" });
+    }
+
+    // Get token from header
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+
+    if (!token) {
+      return res.status(401).json({ error: "Missing access token" });
+    }
+
+    // Verify user
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+
+    // 1. Find student by name and parent_id
+    const { data: student, error: studentErr } = await supabase
+      .from("students")
+      .select("id, name, parent_id")
+      .eq("parent_id", parent_id)
+      .ilike("name", student_name)
+      .limit(1)
+      .maybeSingle();
+
+    if (studentErr || !student) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    // 2. Fetch parent number from parents table
+    const { data: parent, error: parentErr } = await supabase
+      .from("parents")
+      .select("phone_number")
+      .eq("id", student.parent_id)
+      .limit(1)
+      .maybeSingle();
+
+    if (parentErr || !parent) {
+      return res.status(404).json({ error: "Parent not found" });
+    }
+    // Return parent number
+    return res.json({ parent_number: parent.phone_number });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
+export const updateStudent = async (req, res) => {
+  try {
+    const { id, parent_id, name, parent_number } = req.body;
+    console.log("RECEIVED ID:", id);
+    console.log("RECEIVED parnet_ID:", parent_id);
+    console.log("RECEIVED NAME:", name);
+    console.log("RECEIVED parnet number:", parent_number);
+
+    if (!id || !name || !parent_number || !parent_id) {
+      return res
+        .status(400)
+        .json({ error: "id, name, and parent_number, parent_id required" });
+    }
+
+    // Update student name
+    const { error: studentErr } = await supabase
+      .from("students")
+      .update({ name })
+      .eq("id", id);
+
+    if (studentErr) throw studentErr;
+
+    const { error: parentErr } = await supabase
+      .from("parents")
+      .update({ phone_number: parent_number })
+      .eq("id", parent_id); // pass parent_id from frontend if needed
+
+    if (parentErr) throw parentErr;
+
+    return res.json({ message: "Student updated successfully" });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
+export const deleteStudentRow = async (req, res) => {
+  try {
+    const { student_id, parent_id } = req.body;
+
+    console.log("DELETE student_id:", student_id);
+    console.log("DELETE parent_id:", parent_id);
+
+    if (!student_id || !parent_id) {
+      return res
+        .status(400)
+        .json({ error: "student_id and parent_id required" });
+    }
+
+    // 1️⃣ Delete student
+    const { error: studentErr } = await supabase
+      .from("students")
+      .delete()
+      .eq("id", student_id);
+
+    if (studentErr) throw studentErr;
+
+    const { data: linkedStudents, error: findErr } = await supabase
+      .from("students")
+      .select("id")
+      .eq("parent_id", parent_id);
+
+    if (findErr) throw findErr;
+
+    if (linkedStudents.length === 0) {
+      await supabase.from("parents").delete().eq("id", parent_id);
+      console.log("Parent deleted as no students are linked.");
+    }
+
+    return res.json({ message: "Student deleted successfully" });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+};
