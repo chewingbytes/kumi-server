@@ -103,15 +103,6 @@ export const deleteStudent = async (req, res) => {
       .eq("student_id", student.id)
       .eq("user_id", user.id);
 
-    // 🗑 4. Delete from students table
-    const { error: delErr } = await supabase
-      .from("students")
-      .delete()
-      .eq("id", id)
-      .eq("user_id", user.id);
-
-    if (delErr) throw delErr;
-
     return res.json({ message: "Student deleted successfully" });
   } catch (err) {
     console.error("❌ deleteStudent error:", err);
@@ -654,7 +645,7 @@ export async function fetchStudents(req, res) {
       return res.status(401).json({ error: "Invalid or expired token" });
     }
 
-    const userId = user.id; // will be stored in students.user_id
+    const userId = user.id;
 
     const { data, error } = await supabase
       .from("students_checkin")
