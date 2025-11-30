@@ -1,7 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
 import dbRoutes from "./routes/dbRoutes.js";
-import cors from "cors"
+// import cors from "cors"
 
 dotenv.config();
 
@@ -9,14 +9,14 @@ const app = express();
 
 const PORT = process.env.PORT || 8080;
 
-app.use(
-  cors({
-    origin: ["http://localhost:8081", "http://46.62.157.49"], // allowed origins
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
-  })
-);
+// app.use(
+//   cors({
+//     origin: ["http://localhost:8081", "http://46.62.157.49"], // allowed origins
+//     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+//     allowedHeaders: ["Content-Type", "Authorization"],
+//     credentials: true,
+//   })
+// );
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true })); // For form data
