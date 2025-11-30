@@ -497,7 +497,8 @@ export const finishDay = async (req, res) => {
     }
     console.log("EMAIL:", user.email);
 
-    const userEmail = user.email;
+    // const userEmail = user.email;
+    const userEmail = "bryanchewzy24@gmail.com";
     if (!userEmail) {
       return res.status(400).json({ error: "User has no email address" });
     }
@@ -521,9 +522,31 @@ export const finishDay = async (req, res) => {
       const h = Math.floor(mins / 60);
       const m = mins % 60;
 
+      // Convert checkin_time and checkout_time to SG time
+      const checkinSG = row.checkin_time
+        ? new Date(row.checkin_time).toLocaleString("en-SG", {
+            timeZone: "Asia/Singapore",
+          })
+        : "";
+      const checkoutSG = row.checkout_time
+        ? new Date(row.checkout_time).toLocaleString("en-SG", {
+            timeZone: "Asia/Singapore",
+          })
+        : "";
+
+      // Also convert the 'date' field if needed
+      const dateSG = row.date
+        ? new Date(row.date).toLocaleDateString("en-SG", {
+            timeZone: "Asia/Singapore",
+          })
+        : "";
+
       return {
         ...row,
         time_spent: h > 0 ? `${h}h ${m}m` : `${m}m`,
+        checkin_time: checkinSG,
+        checkout_time: checkoutSG,
+        date: dateSG,
       };
     });
 
