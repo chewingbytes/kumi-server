@@ -687,6 +687,47 @@ export async function fetchStudents(req, res) {
   }
 }
 
+export async function fetchHomeScreenStudents(req, res) {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+
+    if (!token) {
+      return res.status(401).json({ error: "Missing access token" });
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      console.error("Auth Error:", userError);
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+
+    const userId = user.id;
+
+    const { data, error } = await supabase
+      .from("students_checkin")
+      .select(
+        `id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, students(name), time_spent, latest_interacted`
+      )
+      .eq("user_id", userId)
+      .order("latest_interacted", { ascending: false })
+      .limit(20);
+
+    if (error) throw error;
+
+    res.status(200).json({ students: data });
+  } catch (err) {
+    console.error("Error fetching students:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 export async function fetchAllStudents(req, res) {
   try {
     const authHeader = req.headers.authorization;
