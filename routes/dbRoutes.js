@@ -34,7 +34,7 @@ router.post("/checkin", checkIn);
 router.post("/checkout", checkOut);
 router.post("/sendMessage", sendIndividualCheckout);
 router.post("/students", submitStudents);
-router.post("/homescreenstudents", fetchHomeScreenStudents);
+router.get("/homescreenstudents", fetchHomeScreenStudents);
 router.get("/status/:name", latestStatus);
 router.get("/students", fetchStudents);
 router.get("/all-students", fetchAllStudents);
