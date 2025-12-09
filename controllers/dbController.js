@@ -717,7 +717,7 @@ export async function fetchHomeScreenStudents(req, res) {
       )
       .eq("user_id", userId)
       .order("latest_interacted", { ascending: false })
-      .limit(20);
+      .limit(5);
 
     if (error) throw error;
 
