@@ -188,87 +188,119 @@ router.post("/upload-csv", upload.single("file"), async (req, res) => {
   }
 });
 
-router.all("/webhooks", async (req, res) => {
-  if (req.method === "GET") {
-    // Verification handshake
-    const mode = req.query["hub.mode"];
-    const challenge = req.query["hub.challenge"];
-    const token = req.query["hub.verify_token"];
+router.get("/webhooks", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
 
-    if (mode === "subscribe" && token === VERIFY_TOKEN) {
-      console.log("WEBHOOK_VERIFIED");
-      return res.status(200).send(challenge);
-    } else {
-      return res.status(403).send("Verification token mismatch");
+  console.log("Webhook verify:", { mode, token, challenge });
+
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    console.log("✅ Webhook verified");
+    return res.status(200).send(challenge);
+  }
+
+  console.warn("❌ Webhook verification failed");
+  return res.sendStatus(403);
+});
+
+import crypto from "crypto";
+
+router.post("/webhooks", async (req, res) => {
+  // Always acknowledge immediately to WhatsApp
+  res.sendStatus(200);
+
+  try {
+    // ---------------------------
+    // 1️⃣ Verify signature (optional but recommended)
+    // ---------------------------
+    const signature = req.headers["x-hub-signature-256"];
+    const appSecret = process.env.META_APP_SECRET;
+    const rawBody = req.rawBody; // Must be set via express.json({verify: (req,res,buf)=>req.rawBody=buf})
+
+    if (signature && appSecret && rawBody) {
+      const expectedHash =
+        "sha256=" +
+        crypto.createHmac("sha256", appSecret).update(rawBody).digest("hex");
+
+      if (signature !== expectedHash) {
+        console.error("❌ Invalid webhook signature");
+        return;
+      }
     }
-  } else if (req.method === "POST") {
+
+    // ---------------------------
+    // 2️⃣ Parse payload
+    // ---------------------------
     const body = req.body;
-    console.log("=== Incoming Webhook ===");
-    console.log(JSON.stringify(body, null, 2));
+    console.log("WEBHOOK BODY RAW:", JSON.stringify(req.body, null, 2));
+    if (!body?.entry?.length) return;
 
-    try {
-      if (body.entry && Array.isArray(body.entry)) {
-        for (const entry of body.entry) {
-          if (!entry.changes) continue;
+    for (const entry of body.entry) {
+      for (const change of entry.changes ?? []) {
+        const value = change.value;
 
-          for (const change of entry.changes) {
-            const value = change.value;
+        // ---------------------------
+        // 📨 Incoming messages (from user)
+        // ---------------------------
+        if (value?.messages?.length) {
+          for (const msg of value.messages) {
+            const record = {
+              whatsapp_message_id: msg.id,
+              from_number: msg.from,
+              type: msg.type,
+              text: msg.text?.body ?? null,
+              timestamp: new Date(Number(msg.timestamp) * 1000),
+              raw_payload: msg,
+            };
 
-            // Handle statuses (sent, delivered, read, failed)
-            if (value.statuses && Array.isArray(value.statuses)) {
-              for (const status of value.statuses) {
-                console.log("📌 Message Status Update:");
-                console.log(`Message ID: ${status.id}`);
-                console.log(`Recipient: ${status.recipient_id}`);
-                console.log(`Status: ${status.status}`);
-                console.log(`Timestamp: ${status.timestamp}`);
+            console.log("📩 Incoming WhatsApp message:", record);
 
-                if (status.errors) {
-                  console.log("⚠️ Errors:");
-                  status.errors.forEach((err) => {
-                    console.log(
-                      `Code: ${err.code}, Title: ${err.title}, Message: ${err.message}`
-                    );
-                  });
-                }
-              }
-            }
+            // const { error } = await supabase
+            //   .from("whatsapp_messages")
+            //   .insert([record]);
 
-            // Handle incoming messages (optional)
-            if (value.messages && Array.isArray(value.messages)) {
-              for (const msg of value.messages) {
-                console.log("📩 Incoming Message:");
-                console.log(`From: ${msg.from}`);
-                console.log(`Type: ${msg.type}`);
-                if (msg.text) console.log(`Text: ${msg.text.body}`);
-                console.log(`Message ID: ${msg.id}`);
-              }
-            }
+            // if (error) console.error("❌ Failed to save incoming message:", error);
+          }
+        }
 
-            // Handle unsupported messages
-            if (value.messages && Array.isArray(value.messages)) {
-              value.messages.forEach((msg) => {
-                if (msg.type === "unsupported" && msg.errors) {
-                  console.log("⚠️ Unsupported Message Error:");
-                  msg.errors.forEach((err) => {
-                    console.log(
-                      `Code: ${err.code}, Title: ${err.title}, Details: ${err.details}`
-                    );
-                  });
-                }
-              });
-            }
+        // ---------------------------
+        // 📬 Outgoing messages statuses (sent/delivered/read)
+        // ---------------------------
+        if (value?.statuses?.length) {
+          for (const status of value.statuses) {
+            const record = {
+              message_id: status.id,
+              recipient_id: status.recipient_id,
+              status: status.status, // sent, delivered, read
+              timestamp: new Date(Number(status.timestamp) * 1000),
+              conversation_id: status.conversation?.id ?? null,
+              raw_payload: status,
+            };
+
+            console.log("📬 Outgoing WhatsApp message status:", record);
+
+            // const { error } = await supabase
+            //   .from("whatsapp_statuses")
+            //   .insert([record]);
+
+            // if (error) console.error("❌ Failed to save status:", error);
+          }
+        }
+
+        // ---------------------------
+        // ⚠️ Optional: handle errors (failed messages)
+        // ---------------------------
+        if (value?.errors?.length) {
+          for (const err of value.errors) {
+            console.error("❌ WhatsApp message error:", err);
+            // Optional: store in a table for monitoring
           }
         }
       }
-
-      return res.sendStatus(200); // acknowledge receipt
-    } catch (err) {
-      console.error("❌ Webhook processing error:", err.message);
-      return res.sendStatus(500);
     }
-  } else {
-    return res.sendStatus(405); // method not allowed
+  } catch (err) {
+    console.error("❌ Webhook processing error:", err);
   }
 });
 

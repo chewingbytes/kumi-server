@@ -18,7 +18,14 @@ const PORT = process.env.PORT || 8080;
 //   })
 // );
 
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf.toString("utf8");
+    },
+  })
+);
+
 app.use(express.urlencoded({ extended: true })); // For form data
 
 app.use("/api/db", dbRoutes);
