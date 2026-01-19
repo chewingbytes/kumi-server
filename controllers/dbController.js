@@ -177,7 +177,7 @@ export async function sendIndividualCheckout(req, res) {
           to: `+65${parent.phone_number}`, // full international format, e.g., "+6598315882"
           type: "template",
           template: {
-            name: "student_dismissal_template",
+            name: "student_alert_dismissal",
             language: { code: "en_US" },
             components: [
               {
@@ -232,7 +232,7 @@ export async function sendCheckoutWhatsApp(studentName, parentNumber) {
           to: `+65${parentNumber}`, // full international format, e.g., "+6598315882"
           type: "template",
           template: {
-            name: "student_dismissal_template",
+            name: "student_alert_dismissal",
             language: { code: "en_US" },
             components: [
               {
