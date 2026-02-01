@@ -478,6 +478,8 @@ export const latestStatus = async (req, res) => {
 
 export const finishDay = async (req, res) => {
   try {
+    const { sendEmail = false } = req.body; 
+
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith("Bearer ")
       ? authHeader.split(" ")[1]
@@ -497,8 +499,7 @@ export const finishDay = async (req, res) => {
     }
     console.log("EMAIL:", user.email);
 
-    // const userEmail = user.email;
-    const userEmail = "bryanchewzy24@gmail.com";
+    const userEmail = user.email;
     if (!userEmail) {
       return res.status(400).json({ error: "User has no email address" });
     }
@@ -609,38 +610,43 @@ export const finishDay = async (req, res) => {
     // Final buffer export
     const buffer = await workbook.xlsx.writeBuffer();
 
-    // Send email with Excel attachment
-    const info = await smtpTransport.sendMail({
-      from: "Kumon @ Punggol Plaza <no-reply@kumonpunggolplaza.com>",
-      to: `${userEmail}`, // Replace with real email or from req.body
-      subject: `📄 Daily Check-in Report - ${new Date().toLocaleDateString("en-SG")}`,
-      text: `Please find attached the daily student check-in/out report.`,
-      attachments: [
-        {
-          filename: `checkins_${new Date().toISOString().slice(0, 10)}.xlsx`,
-          content: buffer,
-          contentType:
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        },
-      ],
-    });
+    // Send email with Excel attachment ONLY if sendEmail is true
+    if (sendEmail) {
+      const info = await smtpTransport.sendMail({
+        from: "Kumon @ Punggol Plaza <no-reply@kumonpunggolplaza.com>",
+        to: `${userEmail}`,
+        subject: `📄 Daily Check-in Report - ${new Date().toLocaleDateString("en-SG")}`,
+        text: `Please find attached the daily student check-in/out report.`,
+        attachments: [
+          {
+            filename: `checkins_${new Date().toISOString().slice(0, 10)}.xlsx`,
+            content: buffer,
+            contentType:
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          },
+        ],
+      });
 
-    console.log("📧 Report email sent:", info.messageId || info.response);
+      console.log("📧 Report email sent:", info.messageId || info.response);
+    } else {
+      console.log("📧 Email skipped - sendEmail was false");
+    }
 
     const { error: insertErr } = await supabase.from("records").insert(data);
     if (insertErr) throw insertErr;
 
-    // --- NEW: Delete all entries from students_checkin ---
+    // --- Always delete all entries from students_checkin ---
     const { error: deleteErr } = await supabase
       .from("students_checkin")
       .delete()
       .eq("user_id", user.id);
     if (deleteErr) throw deleteErr;
 
-    res.json({
-      message:
-        "Report generated, emailed, data archived, and check-ins cleared.",
-    });
+    const message = sendEmail
+      ? "Report generated, emailed, data archived, and check-ins cleared."
+      : "Data archived and check-ins cleared (email not sent).";
+
+    res.json({ message });
   } catch (err) {
     console.error("❌ finishDay error:", err);
     res.status(500).json({ error: "Failed to generate or send report" });
