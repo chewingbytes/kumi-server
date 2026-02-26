@@ -1,6 +1,5 @@
 // routes/students.js
 import supabase from "../config/supabase.js";
-import ExcelJS from "exceljs";
 import fs from "fs";
 import path from "path";
 
@@ -203,12 +202,6 @@ export async function sendIndividualCheckout(req, res) {
       return false;
     }
 
-    await supabase
-      .from("students_checkin")
-      .update({ parent_notified: true })
-      .eq("student_id", student.id)
-      .eq("user_id", user.id); // Filter by user
-
     console.log("📱 WhatsApp message sent:", data);
     return res.status(200).json(true);
   } catch (err) {
@@ -323,7 +316,6 @@ export const checkIn = async (req, res) => {
           checkin_time: sgTime,
           checkout_time: null,
           status: "checked_in",
-          parent_notified: false,
           time_spent: null,
           user_id: user.id,
           date: dateOnly, // Add the date here
@@ -478,7 +470,126 @@ export const latestStatus = async (req, res) => {
 
 export const finishDay = async (req, res) => {
   try {
-    const { sendEmail = false } = req.body; 
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+
+    if (!token) {
+      return res.status(401).json({ error: "Missing access token" });
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+    const { data, error } = await supabase
+      .from("students_checkin")
+      .select(
+        "student_id, student_name, status, parent_notified, time_spent, date, checkin_time, checkout_time, failed_reason"
+      )
+      .eq("user_id", user.id) // Filter by user
+      .order("checkin_time", { ascending: false });
+
+    if (error) throw error;
+
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: "No check-in records found" });
+    }
+
+    const dayDate =
+      data[0]?.date ||
+      new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Singapore" });
+
+    const { data: dayRow, error: dayErr } = await supabase
+      .from("attendance_days")
+      .insert([{ user_id: user.id, date: dayDate }])
+      .select("id")
+      .single();
+    if (dayErr) throw dayErr;
+
+    const recordsToInsert = data.map((row) => ({
+      day_id: dayRow.id,
+      user_id: user.id,
+      date: row.date || dayDate,
+      student_id: row.student_id,
+      student_name: row.student_name,
+      status: row.status,
+      parent_notified: row.parent_notified,
+      time_spent: row.time_spent,
+      checkin_time: row.checkin_time,
+      checkout_time: row.checkout_time,
+      failed_reason: row.failed_reason
+    }));
+
+    const { error: insertErr } = await supabase
+      .from("attendance_records")
+      .insert(recordsToInsert);
+    if (insertErr) throw insertErr;
+
+    const { error: deleteErr } = await supabase
+      .from("students_checkin")
+      .delete()
+      .eq("user_id", user.id);
+    if (deleteErr) throw deleteErr;
+
+    res.json({
+      message: "Day archived and check-ins cleared.",
+      dayId: dayRow.id,
+      date: dayDate,
+      count: recordsToInsert.length,
+    });
+  } catch (err) {
+    console.error("❌ finishDay error:", err);
+    res.status(500).json({ error: "Failed to archive or clear records" });
+  }
+};
+
+export async function fetchAttendanceDates(req, res) {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+
+    if (!token) {
+      return res.status(401).json({ error: "Missing access token" });
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+
+    const { data, error } = await supabase
+      .from("attendance_days")
+      .select("id, date, created_at")
+      .eq("user_id", user.id)
+      .order("date", { ascending: false });
+
+    if (error) throw error;
+    res.status(200).json({ dates: data });
+  } catch (err) {
+    console.error("Error fetching attendance dates:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+export async function fetchAttendanceByDate(req, res) {
+  try {
+    const { date } = req.query;
+
+    if (!date) {
+      return res.status(400).json({ error: "date query param is required" });
+    }
 
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith("Bearer ")
@@ -497,161 +608,59 @@ export const finishDay = async (req, res) => {
     if (userError || !user) {
       return res.status(401).json({ error: "Invalid or expired token" });
     }
-    console.log("EMAIL:", user.email);
 
-    const userEmail = user.email;
-    if (!userEmail) {
-      return res.status(400).json({ error: "User has no email address" });
+    const { data, error } = await supabase
+      .from("attendance_records")
+      .select(
+        "id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, time_spent, date, day_id"
+      )
+      .eq("user_id", user.id)
+      .eq("date", date)
+      .order("checkin_time", { ascending: false });
+
+    if (error) throw error;
+    res.status(200).json({ records: data });
+  } catch (err) {
+    console.error("Error fetching attendance records:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+export async function fetchCurrentCheckins(req, res) {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+
+    if (!token) {
+      return res.status(401).json({ error: "Missing access token" });
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      return res.status(401).json({ error: "Invalid or expired token" });
     }
 
     const { data, error } = await supabase
       .from("students_checkin")
       .select(
-        "student_name, status, parent_notified, time_spent, date, checkin_time, checkout_time"
+        "id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, time_spent, date, failed_reason"
       )
-      .eq("user_id", user.id) // Filter by user
+      .eq("user_id", user.id)
       .order("checkin_time", { ascending: false });
 
     if (error) throw error;
-
-    if (!data || data.length === 0) {
-      return res.status(404).json({ error: "No check-in records found" });
-    }
-
-    const formattedData = data.map((row) => {
-      const mins = row.time_spent || 0;
-      const h = Math.floor(mins / 60);
-      const m = mins % 60;
-
-      // Convert checkin_time and checkout_time to SG time
-      const checkinSG = row.checkin_time
-        ? new Date(row.checkin_time).toLocaleString("en-SG", {
-            timeZone: "Asia/Singapore",
-          })
-        : "";
-      const checkoutSG = row.checkout_time
-        ? new Date(row.checkout_time).toLocaleString("en-SG", {
-            timeZone: "Asia/Singapore",
-          })
-        : "";
-
-      // Also convert the 'date' field if needed
-      const dateSG = row.date
-        ? new Date(row.date).toLocaleDateString("en-SG", {
-            timeZone: "Asia/Singapore",
-          })
-        : "";
-
-      return {
-        ...row,
-        time_spent: h > 0 ? `${h}h ${m}m` : `${m}m`,
-        checkin_time: checkinSG,
-        checkout_time: checkoutSG,
-        date: dateSG,
-      };
-    });
-
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet("Checkins");
-
-    // Header row styling (light blue background, bold)
-    const headers = Object.keys(formattedData[0]);
-    worksheet.addRow(headers);
-    const headerRow = worksheet.getRow(1);
-    headerRow.eachCell((cell) => {
-      cell.font = { bold: true };
-      cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "D9E1F2" }, // light blue
-      };
-      cell.border = {
-        top: { style: "thin" },
-        left: { style: "thin" },
-        bottom: { style: "thin" },
-        right: { style: "thin" },
-      };
-    });
-
-    // Add each data row with conditional coloring
-    formattedData.forEach((row) => {
-      const values = headers.map((key) => row[key]);
-      const newRow = worksheet.addRow(values);
-
-      const isComplete = row.checkin_time && row.checkout_time;
-      const fillColor = isComplete ? "E0F7FA" : "FCE4EC"; // green or red
-
-      newRow.eachCell((cell) => {
-        cell.fill = {
-          type: "pattern",
-          pattern: "solid",
-          fgColor: { argb: fillColor },
-        };
-        cell.border = {
-          top: { style: "thin" },
-          left: { style: "thin" },
-          bottom: { style: "thin" },
-          right: { style: "thin" },
-        };
-      });
-    });
-
-    //bllllueee
-    // Optional: Auto-width for all columns
-    worksheet.columns.forEach((col) => {
-      let maxLength = 10;
-      col.eachCell({ includeEmpty: true }, (cell) => {
-        const val = cell.value ? cell.value.toString() : "";
-        if (val.length > maxLength) maxLength = val.length;
-      });
-      col.width = maxLength + 2;
-    });
-
-    // Final buffer export
-    const buffer = await workbook.xlsx.writeBuffer();
-
-    // Send email with Excel attachment ONLY if sendEmail is true
-    if (sendEmail) {
-      const info = await smtpTransport.sendMail({
-        from: "Kumon @ Punggol Plaza <no-reply@kumonpunggolplaza.com>",
-        to: `${userEmail}`,
-        subject: `📄 Daily Check-in Report - ${new Date().toLocaleDateString("en-SG")}`,
-        text: `Please find attached the daily student check-in/out report.`,
-        attachments: [
-          {
-            filename: `checkins_${new Date().toISOString().slice(0, 10)}.xlsx`,
-            content: buffer,
-            contentType:
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          },
-        ],
-      });
-
-      console.log("📧 Report email sent:", info.messageId || info.response);
-    } else {
-      console.log("📧 Email skipped - sendEmail was false");
-    }
-
-    const { error: insertErr } = await supabase.from("records").insert(data);
-    if (insertErr) throw insertErr;
-
-    // --- Always delete all entries from students_checkin ---
-    const { error: deleteErr } = await supabase
-      .from("students_checkin")
-      .delete()
-      .eq("user_id", user.id);
-    if (deleteErr) throw deleteErr;
-
-    const message = sendEmail
-      ? "Report generated, emailed, data archived, and check-ins cleared."
-      : "Data archived and check-ins cleared (email not sent).";
-
-    res.json({ message });
+    res.status(200).json({ records: data });
   } catch (err) {
-    console.error("❌ finishDay error:", err);
-    res.status(500).json({ error: "Failed to generate or send report" });
+    console.error("Error fetching current checkins:", err.message);
+    res.status(500).json({ error: err.message });
   }
-};
+}
 
 export async function fetchStudents(req, res) {
   try {
@@ -679,10 +688,10 @@ export async function fetchStudents(req, res) {
     const { data, error } = await supabase
       .from("students_checkin")
       .select(
-        `id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, students(name), time_spent, latest_interacted`
+        `id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, students(name), time_spent, latest_interacted, failed_reason`
       )
       .eq("user_id", userId)
-      .order("latest_interacted", { ascending: false });
+      .order("latest_interacted", { ascending: false, nullsFirst: false })
 
     if (error) throw error;
 
@@ -722,8 +731,7 @@ export async function fetchHomeScreenStudents(req, res) {
         `id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, students(name), time_spent, latest_interacted`
       )
       .eq("user_id", userId)
-      .order("latest_interacted", { ascending: false })
-      .limit(5);
+      .order("latest_interacted", { ascending: false, nullsFirst: false })
 
     if (error) throw error;
 

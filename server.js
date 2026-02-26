@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 8080;
 
 app.use(
   cors({
-    origin: ["http://localhost:8081", "http://46.62.157.49"], // allowed origins
+    origin: ["http://localhost:8081", "http://46.62.157.49", "https://dashboard.kumonpunggolplaza.com", "http://localhost:5173"], // allowed origins
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,

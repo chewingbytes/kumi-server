@@ -14,6 +14,9 @@ import {
   updateStudent,
   deleteStudentRow,
   fetchHomeScreenStudents,
+  fetchAttendanceDates,
+  fetchAttendanceByDate,
+  fetchCurrentCheckins,
 } from "../controllers/dbController.js";
 const router = express.Router();
 import multer from "multer";
@@ -21,6 +24,7 @@ import csv from "csv-parser";
 import fs from "fs";
 import fsPromises from "fs/promises";
 import path from "path";
+import crypto from "node:crypto";
 
 const upload = multer({ dest: "uploads/" });
 
@@ -39,6 +43,9 @@ router.get("/status/:name", latestStatus);
 router.get("/students", fetchStudents);
 router.get("/all-students", fetchAllStudents);
 router.post("/finish-day", finishDay);
+router.get("/records/dates", fetchAttendanceDates);
+router.get("/records/by-date", fetchAttendanceByDate);
+router.get("/records/current", fetchCurrentCheckins);
 
 router.post("/upload-csv", upload.single("file"), async (req, res) => {
   console.log("=== /upload-csv called ===");
@@ -204,34 +211,51 @@ router.get("/webhooks", (req, res) => {
   return res.sendStatus(403);
 });
 
-import crypto from "crypto";
-
 router.post("/webhooks", async (req, res) => {
-  // Always acknowledge immediately to WhatsApp
-  res.sendStatus(200);
+  const webhookId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  console.log("📨 Webhook received", {
+    webhookId,
+    method: req.method,
+    path: req.originalUrl,
+    contentLength: req.headers["content-length"],
+    userAgent: req.headers["user-agent"],
+    signature: req.headers["x-hub-signature-256"],
+  });
 
   try {
     // ---------------------------
-    // 1️⃣ Verify signature (optional but recommended)
+    // 1️⃣ Validate signature
     // ---------------------------
-    const signature = req.headers["x-hub-signature-256"];
+    const signatureHeader = req.headers["x-hub-signature-256"];
     const appSecret = process.env.META_APP_SECRET;
-    const rawBody = req.rawBody; // Must be set via express.json({verify: (req,res,buf)=>req.rawBody=buf})
+    const rawBody = req.rawBody;
 
-    if (signature && appSecret && rawBody) {
-      const expectedHash =
-        "sha256=" +
-        crypto.createHmac("sha256", appSecret).update(rawBody).digest("hex");
-
-      if (signature !== expectedHash) {
-        console.error("❌ Invalid webhook signature");
-        return;
-      }
+    if (!signatureHeader || !signatureHeader.startsWith("sha256=")) {
+      console.error("❌ Missing or invalid signature header", { webhookId });
+      return res.sendStatus(400);
     }
 
-    // ---------------------------
-    // 2️⃣ Parse payload
-    // ---------------------------
+    if (!appSecret || !rawBody) {
+      console.error("❌ Missing META_APP_SECRET or raw body", { webhookId });
+      return res.sendStatus(400);
+    }
+
+    const expectedHash =
+      "sha256=" +
+      crypto.createHmac("sha256", appSecret).update(rawBody).digest("hex");
+
+    if (signatureHeader !== expectedHash) {
+      console.error("❌ Invalid webhook signature", {
+        webhookId,
+        signature: signatureHeader,
+        expectedHash,
+      });
+      return res.sendStatus(400);
+    }
+
+    // Valid request
+    res.sendStatus(200);
+
     const body = req.body;
     console.log("WEBHOOK BODY RAW:", JSON.stringify(req.body, null, 2));
     if (!body?.entry?.length) return;
@@ -269,6 +293,7 @@ router.post("/webhooks", async (req, res) => {
         // ---------------------------
         if (value?.statuses?.length) {
           for (const status of value.statuses) {
+            const statusErrors = status.errors ?? [];
             const record = {
               message_id: status.id,
               recipient_id: status.recipient_id,
@@ -278,7 +303,69 @@ router.post("/webhooks", async (req, res) => {
               raw_payload: status,
             };
 
-            console.log("📬 Outgoing WhatsApp message status:", record);
+            if (status.status === "failed" || statusErrors.length > 0) {
+              console.error("❌ WhatsApp message failed:", {
+                ...record,
+                errors: statusErrors.map((err) => ({
+                  code: err.code,
+                  title: err.title,
+                  message: err.message,
+                  details: err.error_data?.details,
+                  href: err.href,
+                })),
+              });
+            } else {
+              console.log("✅ WhatsApp message status:", record);
+            }
+
+            const rawRecipient = status.recipient_id?.toString() ?? "";
+            let recipientDigits = rawRecipient.replace(/\D/g, "");
+            if (recipientDigits.startsWith("65") && recipientDigits.length > 8) {
+              recipientDigits = recipientDigits.slice(2);
+            }
+
+            if (recipientDigits) {
+              const { data: parent, error: parentErr } = await supabase
+                .from("parents")
+                .select("id")
+                .eq("phone_number", recipientDigits)
+                .maybeSingle();
+
+              if (parentErr) {
+                console.error("❌ Parent lookup failed:", parentErr);
+              } else if (parent?.id) {
+                const { data: students, error: studentsErr } = await supabase
+                  .from("students")
+                  .select("id")
+                  .eq("parent_id", parent.id);
+
+                if (studentsErr) {
+                  console.error("❌ Students lookup failed:", studentsErr);
+                } else if (students?.length) {
+                  const statusValue = (status.status ?? "unknown").toUpperCase();
+                  const isSuccess =
+                    statusValue === "SENT" || statusValue === "DELIVERED";
+                  const failedReason = !isSuccess
+                    ? statusErrors[0]?.message ||
+                      statusErrors[0]?.title ||
+                      statusErrors[0]?.error_data?.details ||
+                      null
+                    : null;
+                  const studentIds = students.map((s) => s.id);
+                  const { error: updateErr } = await supabase
+                    .from("students_checkin")
+                    .update({
+                      parent_notified: statusValue,
+                      failed_reason: failedReason,
+                    })
+                    .in("student_id", studentIds);
+
+                  if (updateErr) {
+                    console.error("❌ Failed to update parent_notified:", updateErr);
+                  }
+                }
+              }
+            }
 
             // const { error } = await supabase
             //   .from("whatsapp_statuses")
