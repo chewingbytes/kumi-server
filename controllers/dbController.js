@@ -490,7 +490,7 @@ export const finishDay = async (req, res) => {
     const { data, error } = await supabase
       .from("students_checkin")
       .select(
-        "student_id, student_name, status, parent_notified, time_spent, date, checkin_time, checkout_time, failed_reason"
+        "student_id, student_name, status, parent_notified, time_spent, date, checkin_time, checkout_time, failed_reason, message_sent_timestamp, message_read_timestamp, message_failed_timestamp"
       )
       .eq("user_id", user.id) // Filter by user
       .order("checkin_time", { ascending: false });
@@ -523,7 +523,10 @@ export const finishDay = async (req, res) => {
       time_spent: row.time_spent,
       checkin_time: row.checkin_time,
       checkout_time: row.checkout_time,
-      failed_reason: row.failed_reason
+      failed_reason: row.failed_reason,
+      message_sent_timestamp: row.message_sent_timestamp,
+      message_read_timestamp: row.message_read_timestamp,
+      message_failed_timestamp: row.message_failed_timestamp
     }));
 
     const { error: insertErr } = await supabase
@@ -538,7 +541,7 @@ export const finishDay = async (req, res) => {
     if (deleteErr) throw deleteErr;
 
     res.json({
-      message: "Day archived and check-ins cleared.",
+      message: "Done! Have a nice day :)",
       dayId: dayRow.id,
       date: dayDate,
       count: recordsToInsert.length,
@@ -612,7 +615,7 @@ export async function fetchAttendanceByDate(req, res) {
     const { data, error } = await supabase
       .from("attendance_records")
       .select(
-        "id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, time_spent, date, day_id"
+        "id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, time_spent, date, day_id, failed_reason, message_sent_timestamp, message_read_timestamp, message_failed_timestamp"
       )
       .eq("user_id", user.id)
       .eq("date", date)
@@ -649,7 +652,7 @@ export async function fetchCurrentCheckins(req, res) {
     const { data, error } = await supabase
       .from("students_checkin")
       .select(
-        "id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, time_spent, date, failed_reason"
+        "id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, time_spent, date, failed_reason, message_sent_timestamp, message_read_timestamp, message_failed_timestamp"
       )
       .eq("user_id", user.id)
       .order("checkin_time", { ascending: false });
@@ -688,7 +691,7 @@ export async function fetchStudents(req, res) {
     const { data, error } = await supabase
       .from("students_checkin")
       .select(
-        `id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, students(name), time_spent, latest_interacted, failed_reason`
+        `id, student_id, student_name, checkin_time, checkout_time, status, parent_notified, students(name), time_spent, latest_interacted, failed_reason, message_sent_timestamp, message_read_timestamp, message_failed_timestamp`
       )
       .eq("user_id", userId)
       .order("latest_interacted", { ascending: false, nullsFirst: false })

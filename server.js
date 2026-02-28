@@ -1,6 +1,8 @@
 import express from "express";
 import dotenv from "dotenv";
 import dbRoutes from "./routes/dbRoutes.js";
+// import aiRoutes from "./routes/aiRoutes.js";
+// import stripeRoutes from "./routes/stripeRoutes.js";
 import cors from "cors"
 
 dotenv.config();
@@ -29,10 +31,11 @@ app.use(
 app.use(express.urlencoded({ extended: true })); // For form data
 
 app.use("/api/db", dbRoutes);
+// app.use("/api/ai", aiRoutes);
+// app.use("/api/payment", stripeRoutes);
 
 // app.use("/api/website", websiteRoutes);
 // app.use("/api/auth", authRoutes);
-// app.use("/api/payment", stripeRoutes);
 
 app.get("/", (req, res) => {
   res.send("✅ Server is up and running!");

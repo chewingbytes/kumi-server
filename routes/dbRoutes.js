@@ -320,7 +320,10 @@ router.post("/webhooks", async (req, res) => {
 
             const rawRecipient = status.recipient_id?.toString() ?? "";
             let recipientDigits = rawRecipient.replace(/\D/g, "");
-            if (recipientDigits.startsWith("65") && recipientDigits.length > 8) {
+            if (
+              recipientDigits.startsWith("65") &&
+              recipientDigits.length > 8
+            ) {
               recipientDigits = recipientDigits.slice(2);
             }
 
@@ -342,7 +345,9 @@ router.post("/webhooks", async (req, res) => {
                 if (studentsErr) {
                   console.error("❌ Students lookup failed:", studentsErr);
                 } else if (students?.length) {
-                  const statusValue = (status.status ?? "unknown").toUpperCase();
+                  const statusValue = (
+                    status.status ?? "unknown"
+                  ).toUpperCase();
                   const isSuccess =
                     statusValue === "SENT" || statusValue === "DELIVERED";
                   const failedReason = !isSuccess
@@ -351,17 +356,39 @@ router.post("/webhooks", async (req, res) => {
                       statusErrors[0]?.error_data?.details ||
                       null
                     : null;
+
+                  // Build timestamp fields based on status
+                  const baseUpdate = {
+                    parent_notified: statusValue,
+                    failed_reason: failedReason,
+                  };
+
+                  const eventTime = status.timestamp
+                    ? new Date(Number(status.timestamp) * 1000).toISOString()
+                    : new Date().toISOString();
+
+                  if (statusValue === "SENT" || statusValue === "DELIVERED") {
+                    baseUpdate.message_sent_timestamp = eventTime;
+                  }
+
+                  if (statusValue === "READ") {
+                    baseUpdate.message_read_timestamp = eventTime;
+                  }
+
+                  if (statusValue === "FAILED") {
+                    baseUpdate.message_failed_timestamp = eventTime;
+                  }
                   const studentIds = students.map((s) => s.id);
                   const { error: updateErr } = await supabase
                     .from("students_checkin")
-                    .update({
-                      parent_notified: statusValue,
-                      failed_reason: failedReason,
-                    })
+                    .update(baseUpdate)
                     .in("student_id", studentIds);
 
                   if (updateErr) {
-                    console.error("❌ Failed to update parent_notified:", updateErr);
+                    console.error(
+                      "❌ Failed to update parent_notified:",
+                      updateErr,
+                    );
                   }
                 }
               }
