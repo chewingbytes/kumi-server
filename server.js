@@ -3,7 +3,8 @@ import dotenv from "dotenv";
 import dbRoutes from "./routes/dbRoutes.js";
 // import aiRoutes from "./routes/aiRoutes.js";
 // import stripeRoutes from "./routes/stripeRoutes.js";
-import cors from "cors"
+import websiteRoutes from "./routes/websiteRoutes.js";
+// import cors from "cors"
 
 dotenv.config();
 
@@ -11,14 +12,14 @@ const app = express();
 
 const PORT = process.env.PORT || 8080;
 
-app.use(
-  cors({
-    origin: ["http://localhost:8081", "http://46.62.157.49", "https://dashboard.kumonpunggolplaza.com", "http://localhost:5173"], // allowed origins
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
-  })
-);
+// app.use(
+//   cors({
+//     origin: ["http://localhost:8081", "http://46.62.157.49", "https://dashboard.kumonpunggolplaza.com", "http://localhost:5173", "http://172.20.10.2:8081"], // allowed origins
+//     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+//     allowedHeaders: ["Content-Type", "Authorization"],
+//     credentials: true,
+//   })
+// );
 
 app.use(
   express.json({
@@ -34,7 +35,7 @@ app.use("/api/db", dbRoutes);
 // app.use("/api/ai", aiRoutes);
 // app.use("/api/payment", stripeRoutes);
 
-// app.use("/api/website", websiteRoutes);
+app.use("/api/website", websiteRoutes);
 // app.use("/api/auth", authRoutes);
 
 app.get("/", (req, res) => {
